@@ -606,8 +606,8 @@
         };
         function enterApp() {
             $('#loginView').classList.add('hidden'); $('#loginView').innerHTML = ''; $('#app').classList.remove('hidden');
-            PAGE = ['dashboard', 'pos', 'products', 'stock', 'orders', 'invoices'].find(can) || 'dashboard';
-            renderSide(); renderView();
+PAGE = NAV.map(n => n[0]).find(can) || 'dashboard';
+if (!can(PAGE)) toast('الدور ده مالوش صلاحيات — كلّم المالك', 'warn');            renderSide(); renderView();
         }
 
         /* ================= DASHBOARD ================= */
@@ -650,7 +650,7 @@
 
         /* ================= SHARED: pick variant / log ================= */
         function logMove(p, v, delta, type, ref) { DB.movements.unshift({ id: uid(), date: new Date().toISOString(), pid: p.id, vid: v.id, name: p.name, label: vlabel(v), qty: delta, type, ref: ref || '', user: USER ? USER.name : 'النظام' }); }
-        const vm = (v, q) => vm(v, q) || (v.sku || '').toLowerCase().includes(q);
+        const vm = (v, q) => (v.barcode || '').toLowerCase().includes(q) || (v.sku || '').toLowerCase().includes(q);
         function pickVariant(cb, o = {}) {
             PICK = { cb, o };
             modal('اختيار الصنف', `<input id="pickQ" class="inp mb-3" placeholder="ابحثي بالاسم أو الباركود..." data-oninput="pickQ" autocomplete="off"><div id="pickList" class="space-y-1.5 max-h-[55vh] overflow-y-auto"></div>`);
@@ -1742,7 +1742,7 @@
         /* ================= USERS & PERMISSIONS ================= */
         function pgUsers() {
             const roles = Object.keys(DB.roles), builtin = ['owner', 'manager', 'cashier', 'store'];
-            return `<div class="space-y-4"><div class="card"><div class="p-4 flex items-center justify-between"><h3 class="font-extrabold text-cocoa title">المستخدمون</h3><button class="btn btn-primary btn-sm" data-action="userEdit" data-id="">＋ مستخدم</button></div>
+            return `<div class="space-y-4"><div class="card"><div class="p-4 flex items-center justify-between"><h3 class="font-extrabold text-cocoa title">المستخدمون</h3><div class="flex gap-2"><button class="btn btn-soft btn-sm" data-action="usersSync">🔄 مزامنة حسابات الدخول</button><button class="btn btn-primary btn-sm" data-action="userEdit" data-id="">＋ مستخدم</button></div></div>
     <div class="overflow-x-auto"><table class="w-full min-w-[560px]"><thead><tr><th class="th">الاسم</th><th class="th">اسم المستخدم</th><th class="th">الدور</th><th class="th">الحالة</th><th class="th"></th></tr></thead><tbody>
     ${DB.users.map(u => `<tr><td class="td font-bold">${esc(u.name)}</td><td class="td">${esc(u.username)}</td><td class="td"><span class="badge bg-sand/40 text-cocoa">${esc(DB.roles[u.role] ? DB.roles[u.role].label : u.role)}</span></td><td class="td">${u.active ? '<span class="badge bg-emerald-100 text-emerald-700">نشط</span>' : '<span class="badge bg-stone-100 text-stone-500">موقوف</span>'}</td>
     <td class="td"><div class="flex gap-1 justify-end"><button class="btn btn-soft btn-sm" data-action="userEdit" data-id="${u.id}">تعديل</button>${can('delete') && u.id !== USER.id ? `<button class="btn btn-danger btn-sm" data-action="userDel" data-id="${u.id}">حذف</button>` : ''}</div></td></tr>`).join('')}</tbody></table></div></div>
@@ -1764,49 +1764,70 @@
     <label class="flex items-center gap-2 text-sm">${toggle(u.active, 'id="us_act"')} حساب نشط</label></div>`, { size: 'md', footer: `<button class="btn btn-primary" data-action="userSave" data-id="${u.id}">حفظ</button>` });
         };
 
-        async function fbUpsertAuth(old, un, pin) {
-            const app2 = firebase.apps.find(a => a.name === 'second') || firebase.initializeApp(FB_CONFIG, 'second');
-            const a = app2.auth(), c = fbCred(un, pin);
-            try {
-                if (old && old.username) {
-                    const oc = fbCred(old.username, old.pin);
-                    try {
-                        await a.signInWithEmailAndPassword(oc.email, oc.pass);
-                        if (oc.email === c.email) {                       // نفس اليوزر: حدّث الباسورد فقط
-                            if (oc.pass !== c.pass) await a.currentUser.updatePassword(c.pass);
-                            return;
-                        }
-                        await a.currentUser.delete();                      // اليوزر اتغيّر: امسح القديم وأنشئ الجديد
-                    } catch (e) { /* الحساب القديم مش موجود أو الباسورد مختلف */ }
-                }
-                try { await a.createUserWithEmailAndPassword(c.email, c.pass); }
-                catch (e) {
-                    if (e.code !== 'auth/email-already-in-use') throw e;
-                    try { await a.signInWithEmailAndPassword(c.email, c.pass); }
-                    catch (e2) { const er = new Error('pw'); er.code = 'الحساب موجود في Firebase بباسورد مختلف — غيّر الباسورد من Firebase Console'; throw er; }
-                }
-            } finally { try { await a.signOut(); } catch (e) { } }
+        async function fbUpsertAuth(id, oldPin, pin) {
+    const app2 = firebase.apps.find(a => a.name === 'second') || firebase.initializeApp(FB_CONFIG, 'second');
+    const a = app2.auth(), c = fbCred(id, pin);
+    try {
+        if (oldPin && oldPin !== pin) {                       // نفس المعرّف وPIN اتغيّر: حدّث الباسورد
+            const oc = fbCred(id, oldPin); let ok = false;
+            try { await a.signInWithEmailAndPassword(oc.email, oc.pass); await a.currentUser.updatePassword(c.pass); ok = true; } catch (e) { }
+            if (ok) return;
+            try { await a.signOut(); } catch (e) { }
         }
+        try { await a.createUserWithEmailAndPassword(c.email, c.pass); }
+        catch (e) {
+            if (e.code !== 'auth/email-already-in-use') throw e;
+            try { await a.signInWithEmailAndPassword(c.email, c.pass); }   // موجود وباسورده مظبوط
+            catch (e2) { const er = new Error('pw'); er.code = 'الحساب موجود في Firebase بباسورد مختلف — ادخل بيه مرة وهيتظبط تلقائي'; throw er; }
+        }
+    } finally { try { await a.signOut(); } catch (e) { } }
+}
 
-        ACT.userSave = async t => {
-            const g = id => $('#' + id).value.trim(), id = t.dataset.id, name = g('us_name'), un = toLatin(g('us_user')), pin = toLatin(g('us_pin'));
-            if (!name || !un) return toast('أكمل الاسم ومعرّف الدخول', 'err');
-            if (!/^\d{4,}$/.test(pin)) return toast('الرقم السري 4 أرقام على الأقل', 'err');
-            if (DB.users.some(u => u.id !== id && (u.username || '').toLowerCase() === un.toLowerCase())) return toast('المعرّف مستخدم بالفعل', 'err');
-            const act = $('#us_act').checked, role = g('us_role');
-            if (id) {
-                const u = DB.users.find(x => x.id === id);
-                if (u.role === 'owner' && (role !== 'owner' || !act) && DB.users.filter(x => x.role === 'owner' && x.active).length <= 1) return toast('لازم يبقى مالك نشط واحد على الأقل', 'err');
-            }
-            if (FBS.on) {
-                const old = id ? DB.users.find(x => x.id === id) : null;
-                try { await fbUpsertAuth(old && { username: old.username, pin: old.pin }, un, pin); }
-                catch (e) { console.error(e); return toast('تعذر تحديث حساب الدخول: ' + (e.code || e.message), 'err'); }
-            }
-            if (id) { const u = DB.users.find(x => x.id === id); Object.assign(u, { name, username: un, pin, role, active: act }); if (u.id === USER.id) USER = u; }
-            else DB.users.push({ id: 'u' + uid(), name, username: un, pin, role, active: act });
-            save(); closeTopModal(); renderSide(); renderView(); toast('تم الحفظ');
-        };
+let USR_BUSY = false;
+ACT.userSave = async t => {
+    if (USR_BUSY) return;
+    const g = id => $('#' + id).value.trim(), id = t.dataset.id, name = g('us_name'), un = toLatin(g('us_user')), pin = toLatin(g('us_pin'));
+    if (!name || !un) return toast('أكمل الاسم ومعرّف الدخول', 'err');
+    if (!/^\d{4,}$/.test(pin)) return toast('الرقم السري 4 أرقام على الأقل', 'err');
+    if (DB.users.some(u => u.id !== id && userLogins(u).includes(loginId(un)))) return toast('المعرّف مستخدم بالفعل', 'err');
+    const act = $('#us_act').checked, role = g('us_role');
+    if (id) {
+        const u = DB.users.find(x => x.id === id);
+        if (u.role === 'owner' && (role !== 'owner' || !act) && DB.users.filter(x => x.role === 'owner' && x.active).length <= 1) return toast('لازم يبقى مالك نشط واحد على الأقل', 'err');
+    }
+    USR_BUSY = true;
+    try {
+        const old = id ? DB.users.find(x => x.id === id) : null;
+        if (FBS.on && FBS.ready) {
+            const ids = [...new Set([un, old && old.phone].map(x => loginId(x || '')).filter(Boolean))];
+            try { for (const i of ids) await fbUpsertAuth(i, old && old.pin, pin); }
+            catch (e) { console.error(e); return toast('تعذر تحديث حساب الدخول: ' + (e.code || e.message), 'err'); }
+        }
+        if (old) { Object.assign(old, { name, username: un, pin, role, active: act }); if (old.id === USER.id) USER = old; }
+        else DB.users.push({ id: 'u' + uid(), name, username: un, pin, role, active: act });
+        save();
+        if (FBS.on && FBS.ready) { clearTimeout(FBS.timer); await fbPush(); }   // نضمن الحفظ قبل ما تقفلي الصفحة
+        closeTopModal(); renderSide(); renderView(); toast('تم الحفظ');
+    } finally { USR_BUSY = false; }
+};
+
+// يتأكد إن لكل مستخدم نشط حساب دخول شغال (ينشئه لو ناقص)
+ACT.usersSync = async () => {
+    if (!(FBS.on && FBS.ready)) return toast('المزامنة محتاجة اتصال Firebase', 'err');
+    const ok = [], bad = [];
+    toast('جاري مزامنة حسابات الدخول…', 'warn');
+    for (const u of DB.users.filter(x => x.active)) {
+        if (!/^\d{4,}$/.test(u.pin || '')) { bad.push(u.name + ' — مفيش رقم سري محفوظ (يدخل مرة بنفسه وهيتظبط)'); continue; }
+        try { for (const i of userLogins(u)) await fbUpsertAuth(i, '', u.pin); ok.push(u.name); }
+        catch (e) { bad.push(u.name + ' — ' + (e.code || e.message)); }
+    }
+    modal('نتيجة مزامنة حسابات الدخول', `<div class="space-y-3 text-sm">
+      <div class="p-3 rounded-xl bg-emerald-50 text-emerald-800">شغّال: <b>${ok.length}</b>${ok.length ? ' — ' + ok.map(esc).join('، ') : ''}</div>
+      ${bad.length ? `<div class="p-3 rounded-xl bg-red-50 text-red-600 leading-7"><b>محتاج انتباه (${bad.length}):</b><br>${bad.map(esc).join('<br>')}</div>` : ''}</div>`, { size: 'sm' });
+};
+
+
+                         
         ACT.userDel = t => {
             const u = DB.users.find(x => x.id === t.dataset.id); if (!u) return;
             if (u.id === USER.id) return toast('مينفعش تحذف نفسك', 'err');
@@ -2713,49 +2734,67 @@ ACT.invRenum = () => {
         }
         const withTimeout = (p, ms = 30000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('Firebase timeout')), ms))]);
         let PENDING = null;
-        const fbCred = (u, p) => {
-            const id = toLatin(u).trim().toLowerCase().replace(/\s+/g, '');
-            const safe = /^[a-z0-9._-]+$/.test(id)
-                ? id
-                : 'u' + [...new TextEncoder().encode(id)].map(b => b.toString(16).padStart(2, '0')).join('');
-            return { email: safe + '@tiana.app', pass: toLatin(p).trim() + 'tiana' };
-        };
+const hash53 = s => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16); };
+// المعرّف الموحّد: لو أرقام بس يتحوّل لصيغة الموبايل (01xxxxxxxxx)
+const loginId = u => {
+    let id = toLatin(u).trim().toLowerCase().replace(/\s+/g, '');
+    if (/^\d+$/.test(id.replace(/[+\-()]/g, ''))) id = normPhone(id.replace(/[+\-()]/g, ''));
+    return id;
+};
+const fbCred = (u, p) => {
+    const id = loginId(u);
+    let safe = (/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(id) && !/[._-]{2}/.test(id) && id.length <= 60) ? id : null;
+    if (!safe) {
+        const hex = [...new TextEncoder().encode(id)].map(b => b.toString(16).padStart(2, '0')).join('');
+        safe = hex.length <= 62 ? 'u' + hex : 'h' + hash53(id);
+    }
+    return { email: safe + '@tiana.app', pass: toLatin(p).trim() + 'tiana' };
+};
+const userLogins = u => [...new Set([u.username, u.phone].map(x => loginId(x || '')).filter(Boolean))];
 
-        function fbAuthGate() {
-            return new Promise(resolve => {
-                const stop = firebase.auth().onAuthStateChanged(u => {
-                    if (u) { stop(); resolve(); return; }
-                    // Firebase رد وفعلاً مفيش مستخدم: اعرض شاشة الدخول
-                    $('#loginView').classList.remove('hidden');
-                    $('#loginView').innerHTML = `<div class="min-h-full flex items-center justify-center p-4"><div class="card w-full max-w-md p-7">
-                    <div class="flex justify-center mb-2">${logoHTML('h-24')}</div>
-                    <label class="lbl">اسم المستخدم او رقم الهاتف (ID)</label>
-<input id="lgPhone" class="inp mb-3" dir="ltr" placeholder="User name / Phone numbet" data-enter="fbSignIn">
-                    <label class="lbl">الرقم السري</label>
-                    <input id="lgPin" type="password" inputmode="numeric" class="inp mb-4" placeholder="••••••••" data-enter="fbSignIn">
-                    <button data-action="fbSignIn" class="btn btn-primary w-full !py-3">دخول</button></div></div>`;
-                });
-            });
-        }
-        ACT.fbSignIn = async () => {
-            const un = $('#lgPhone').value, pin = $('#lgPin').value;
-            if (!un.trim() || !pin.trim()) return toast('اكتب اسم المستخدم والرقم السري', 'err');
-            const c = fbCred(un, pin);
-            PENDING = { un: toLatin(un).trim().toLowerCase(), pin: toLatin(pin).trim() };
-            try {
-                await firebase.auth().signInWithEmailAndPassword(c.email, c.pass);
-            } catch (e) {
-                PENDING = null; console.error(e);
-                const m = {
-                    'auth/invalid-credential': 'الحساب مش موجود في Firebase أو الباسورد غلط',
-                    'auth/user-not-found': 'الحساب مش موجود في Firebase',
-                    'auth/wrong-password': 'الرقم السري غلط',
-                    'auth/operation-not-allowed': 'Email/Password مش مفعّل في Firebase',
-                    'auth/network-request-failed': 'مشكلة في الاتصال بالإنترنت'
-                }[e.code] || ('خطأ: ' + e.code);
-                toast(m, 'err');
-            }
-        };
+        const LOADING_HTML = '<div class="min-h-full flex items-center justify-center text-stone-500 font-bold p-10">جاري تحميل البيانات…</div>';
+function fbLoginForm() {
+    $('#loginView').classList.remove('hidden');
+    $('#loginView').innerHTML = `<div class="min-h-full flex items-center justify-center p-4"><div class="card w-full max-w-md p-7">
+    <div class="flex justify-center mb-2">${logoHTML('h-24')}</div>
+    <label class="lbl">اسم المستخدم أو رقم الموبايل</label>
+    <input id="lgPhone" class="inp mb-3" dir="ltr" autocomplete="username" placeholder="Username / 01xxxxxxxxx" data-enter="fbSignIn">
+    <label class="lbl">الرقم السري</label>
+    <input id="lgPin" type="password" inputmode="numeric" autocomplete="current-password" class="inp mb-4" placeholder="••••" data-enter="fbSignIn">
+    <button data-action="fbSignIn" class="btn btn-primary w-full !py-3">دخول</button></div></div>`;
+    setTimeout(() => { const i = $('#lgPhone'); if (i) i.focus(); }, 50);
+}
+function fbAuthGate() {
+    return new Promise(resolve => {
+        const stop = firebase.auth().onAuthStateChanged(u => {
+            if (u) { stop(); $('#loginView').classList.remove('hidden'); $('#loginView').innerHTML = LOADING_HTML; resolve(u); return; }
+            fbLoginForm();
+        });
+    });
+}
+ACT.fbSignIn = async () => {
+    const un = $('#lgPhone').value, pin = $('#lgPin').value, btn = $('#loginView [data-action="fbSignIn"]');
+    if (!un.trim() || !pin.trim()) return toast('اكتب اسم المستخدم والرقم السري', 'err');
+    const c = fbCred(un, pin);
+    PENDING = { id: loginId(un), pin: toLatin(pin).trim() };
+    if (btn) { btn.disabled = true; btn.textContent = 'جاري الدخول…'; }
+    try {
+        await firebase.auth().signInWithEmailAndPassword(c.email, c.pass);
+    } catch (e) {
+        PENDING = null; console.error(e);
+        if (btn) { btn.disabled = false; btn.textContent = 'دخول'; }
+        toast({
+            'auth/invalid-credential': 'المعرّف أو الرقم السري غلط (أو الحساب لسه متزامنش — المالك يدوس "مزامنة حسابات الدخول")',
+            'auth/user-not-found': 'الحساب مش موجود — المالك يدوس "مزامنة حسابات الدخول"',
+            'auth/wrong-password': 'الرقم السري غلط',
+            'auth/invalid-email': 'المعرّف غير صالح',
+            'auth/user-disabled': 'الحساب موقوف',
+            'auth/too-many-requests': 'محاولات كتير — استنى شوية وجرّب تاني',
+            'auth/operation-not-allowed': 'Email/Password مش مفعّل في Firebase',
+            'auth/network-request-failed': 'مشكلة في الاتصال بالإنترنت'
+        }[e.code] || ('خطأ: ' + (e.code || e.message)), 'err');
+    }
+};
         const profileFor = au => au && DB.users.find(x => x.active &&
             [x.username, x.phone].some(v => v && fbCred(v, '').email === au.email));
 
@@ -2797,19 +2836,18 @@ ACT.invRenum = () => {
                     if (D) { DB = D; migrate(); }
                     else {                                   // أول تشغيل: Firestore فاضي
                         DB = local; if (!DB) seed(); migrate();
-                        if (!profileFor(au)) {               // أول حساب بيدخل على قاعدة فاضية = المالك
-                            const un = au.email.replace('@tiana.app', '');
-                            DB.users = [{ id: 'u1', name: un, username: un, pin: '', role: 'owner', active: true }];
-                        }
+                        if (!profileFor(au)) {
+    const id = PENDING ? PENDING.id : au.email.replace('@tiana.app', '');
+    DB.users = [{ id: 'u1', name: id, username: id, pin: PENDING ? PENDING.pin : '', role: 'owner', active: true }];
+}
                     }
                     FBS.ready = true;
                     if (!D) fbPush();
                     fbListen(); fbSchedule();
                     u = profileFor(au);
-                    if (!u) {
-                        toast('الحساب ده مش مسجّل كمستخدم نشط في النظام — كلّم المالك', 'err');
-                        await firebase.auth().signOut(); setTimeout(() => location.reload(), 2500); return;
-                    }
+if (u && PENDING && PENDING.pin && u.pin !== PENDING.pin) { u.pin = PENDING.pin; save(); }  // يصلّح PIN المخزّن ليطابق الباسورد الفعلي
+PENDING = null;
+if (!u) {
                 } catch (e) {
                     console.error(e); DB = local; if (!DB) seed(); migrate(); FBS.ready = false;
                     toast('تعذر الاتصال بـ Firebase: ' + (e.code || e.message), 'err');
