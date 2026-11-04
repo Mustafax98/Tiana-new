@@ -677,7 +677,7 @@ if (!can(PAGE)) toast('الدور ده مالوش صلاحيات — كلّم ا
   <div class="space-y-3 min-w-0">
     <div class="card p-3 space-y-3">
       <div class="flex gap-2"><div class="relative flex-1"><span class="absolute top-2.5 start-3">🔍</span>
-        <input id="posScan" class="inp ps-9 !py-2.5" placeholder="امسحي الباركود بالسكانر أو اكتبي اسم المنتج ثم Enter" autocomplete="off" data-oninput="posSearch"></div>
+        <input id="posScan" class="inp ps-9 !py-2.5" placeholder="امسح الباركود بالسكانر أو اكتب اسم المنتج ثم Enter" autocomplete="off" data-oninput="posSearch"></div>
         <button class="btn btn-soft" data-action="posCam">📷 كاميرا</button></div>
       <div class="flex gap-1.5 overflow-x-auto pb-1"><button class="chip ${!POS.cat ? 'chip-on' : ''}" data-action="posCat" data-c="">الكل</button>${cats.map(c => `<button class="chip ${POS.cat === c ? 'chip-on' : ''}" data-action="posCat" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
     </div>
