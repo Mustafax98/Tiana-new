@@ -2845,10 +2845,13 @@ ACT.fbSignIn = async () => {
                     if (!D) fbPush();
                     fbListen(); fbSchedule();
                     u = profileFor(au);
-if (u && PENDING && PENDING.pin && u.pin !== PENDING.pin) { u.pin = PENDING.pin; save(); }  // يصلّح PIN المخزّن ليطابق الباسورد الفعلي
+if (u && PENDING && PENDING.pin && u.pin !== PENDING.pin) { u.pin = PENDING.pin; save(); }
 PENDING = null;
 if (!u) {
-                } catch (e) {
+    toast('الحساب ده مش مسجّل كمستخدم نشط في النظام — تواصل مع المالك', 'err');
+    await firebase.auth().signOut(); setTimeout(() => location.reload(), 2500); return;
+}
+} catch (e) {
                     console.error(e); DB = local; if (!DB) seed(); migrate(); FBS.ready = false;
                     toast('تعذر الاتصال بـ Firebase: ' + (e.code || e.message), 'err');
                 }
