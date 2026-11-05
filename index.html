@@ -89,7 +89,7 @@
             display: none
         }
 
-                @media print {
+        @media print {
             body>*:not(#printArea) {
                 display: none !important
             }
@@ -652,8 +652,8 @@
         };
         function enterApp() {
             $('#loginView').classList.add('hidden'); $('#loginView').innerHTML = ''; $('#app').classList.remove('hidden');
-PAGE = NAV.map(n => n[0]).find(can) || 'dashboard';
-if (!can(PAGE)) toast('الدور ده مالوش صلاحيات — كلّم المالك', 'warn');            renderSide(); renderView();
+            PAGE = NAV.map(n => n[0]).find(can) || 'dashboard';
+            if (!can(PAGE)) toast('الدور ده مالوش صلاحيات — كلّم المالك', 'warn'); renderSide(); renderView();
         }
 
         /* ================= DASHBOARD ================= */
@@ -1587,11 +1587,19 @@ if (!can(PAGE)) toast('الدور ده مالوش صلاحيات — كلّم ا
             if (typeof ExcelJS === 'undefined') return toast('مكتبة Excel لم تُحمَّل — تأكد من الاتصال بالإنترنت', 'err');
             const [from, to] = repRange(), m = metrics(from, to), cur = S().currency;
             const wb = new ExcelJS.Workbook(); wb.creator = S().store; wb.created = new Date();
-            const sub = `${S().store} • الفترة: ${from} ← ${to} • أُنشئ بواسطة: ${USER.name} • ${fdate(new Date())} • العملة: ${cur}`;
+            const TABN = { sum: 'الملخص', prod: 'المنتجات', pay: 'طرق الدفع', ret: 'المرتجعات', stock: 'المخزون', cash: 'الكاشير', bank: 'أرصدة البنك' }[tab] || '';
+            const sub = `${S().store} • ${TABN} • الفترة: ${from} ← ${to} • أُنشئ بواسطة: ${USER.name} • ${fdate(new Date())} • العملة: ${cur}`;
             const sorted = [...m.invs].sort((a, b) => invNum(a) - invNum(b));
             const icost = i => i.items.reduce((a, x) => a + x.cost * x.qty, 0);
             const iprofit = i => i.items.reduce((a, x) => a + (x.netEx - x.cost) * x.qty, 0);
             const D = (c, d) => ({ h: c, w: d });
+            const tab = UI.rep.tab;
+            const SHEETS = {
+                sum: ['sum', 'daily', 'inv', 'lines'],   // تاب الملخص = الملخص + اليومي + الفواتير + تفاصيل الأصناف
+                prod: ['prod'], pay: ['pay'], ret: ['ret'],
+                stock: ['stock'], cash: ['cash'], bank: ['bank', 'bankmv']
+            }[tab] || ['sum'];
+            const want = k => SHEETS.includes(k);
 
             /* ---- 1) ملخص التقرير ---- */
             {
@@ -1779,9 +1787,30 @@ if (!can(PAGE)) toast('الدور ده مالوش صلاحيات — كلّم ا
                 { ...D('الحالة', 12), v: r => r.v.qty <= 0 ? 'نفد' : r.v.qty <= r.p.minStock ? 'ناقص' : 'متوفر' }
             ], stock);
 
+            if (want('bank')) {
+                xjSheet(wb, 'أرصدة البنك', 'أرصدة الحسابات البنكية (حتى لحظة التصدير)', sub, [
+                    { ...D('الحساب', 24), v: r => r.b.name + (r.b.active ? '' : ' (موقوف)') },
+                    { ...D('البنك', 18), v: r => r.b.bank || '—' },
+                    { ...D('رصيد افتتاحي', 15), t: 'money', sum: 1, v: r => r.open },
+                    { ...D('مقبوضات', 15), t: 'money', sum: 1, v: r => r.sales },
+                    { ...D('مردودات', 15), t: 'money', sum: 1, v: r => r.refunds },
+                    { ...D('إيداعات', 15), t: 'money', sum: 1, v: r => r.dep },
+                    { ...D('سحوبات', 15), t: 'money', sum: 1, v: r => r.wd },
+                    { ...D('الرصيد الحالي', 16), t: 'money', sum: 1, f: n => `C${n}+D${n}-E${n}+F${n}-G${n}`, v: r => r.bal }
+                ], bankStats().list);
+            }
+            if (want('bankmv')) {
+                xjSheet(wb, 'حركة البنك', 'حركة الحسابات البنكية خلال الفترة', sub, [
+                    { ...D('التاريخ', 20), t: 'date', v: r => xjLocal(r.date) },
+                    { ...D('الحساب', 24), v: r => (bankById(r.bank) || {}).name || '—' },
+                    { ...D('البيان', 36), v: r => r.label },
+                    { ...D('المبلغ (+ داخل / − خارج)', 20), t: 'money', sum: 1, v: r => r.amt }
+                ], bankMoves(from, to).reverse());
+            }
+
             try {
                 const buf = await wb.xlsx.writeBuffer();
-                download('tiana-report-' + from + '_' + to + '.xlsx', buf, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+                download('tiana-report-' + tab + '-' + from + '_' + to + '.xlsx', buf, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
                 toast('تم تحميل التقرير ✅');
             } catch (e) { console.error(e); toast('حصل خطأ أثناء إنشاء الملف', 'err'); }
         };
@@ -1811,69 +1840,69 @@ if (!can(PAGE)) toast('الدور ده مالوش صلاحيات — كلّم ا
         };
 
         async function fbUpsertAuth(id, oldPin, pin) {
-    const app2 = firebase.apps.find(a => a.name === 'second') || firebase.initializeApp(FB_CONFIG, 'second');
-    const a = app2.auth(), c = fbCred(id, pin);
-    try {
-        if (oldPin && oldPin !== pin) {                       // نفس المعرّف وPIN اتغيّر: حدّث الباسورد
-            const oc = fbCred(id, oldPin); let ok = false;
-            try { await a.signInWithEmailAndPassword(oc.email, oc.pass); await a.currentUser.updatePassword(c.pass); ok = true; } catch (e) { }
-            if (ok) return;
-            try { await a.signOut(); } catch (e) { }
+            const app2 = firebase.apps.find(a => a.name === 'second') || firebase.initializeApp(FB_CONFIG, 'second');
+            const a = app2.auth(), c = fbCred(id, pin);
+            try {
+                if (oldPin && oldPin !== pin) {                       // نفس المعرّف وPIN اتغيّر: حدّث الباسورد
+                    const oc = fbCred(id, oldPin); let ok = false;
+                    try { await a.signInWithEmailAndPassword(oc.email, oc.pass); await a.currentUser.updatePassword(c.pass); ok = true; } catch (e) { }
+                    if (ok) return;
+                    try { await a.signOut(); } catch (e) { }
+                }
+                try { await a.createUserWithEmailAndPassword(c.email, c.pass); }
+                catch (e) {
+                    if (e.code !== 'auth/email-already-in-use') throw e;
+                    try { await a.signInWithEmailAndPassword(c.email, c.pass); }   // موجود وباسورده مظبوط
+                    catch (e2) { const er = new Error('pw'); er.code = 'الحساب موجود في Firebase بباسورد مختلف — ادخل بيه مرة وهيتظبط تلقائي'; throw er; }
+                }
+            } finally { try { await a.signOut(); } catch (e) { } }
         }
-        try { await a.createUserWithEmailAndPassword(c.email, c.pass); }
-        catch (e) {
-            if (e.code !== 'auth/email-already-in-use') throw e;
-            try { await a.signInWithEmailAndPassword(c.email, c.pass); }   // موجود وباسورده مظبوط
-            catch (e2) { const er = new Error('pw'); er.code = 'الحساب موجود في Firebase بباسورد مختلف — ادخل بيه مرة وهيتظبط تلقائي'; throw er; }
-        }
-    } finally { try { await a.signOut(); } catch (e) { } }
-}
 
-let USR_BUSY = false;
-ACT.userSave = async t => {
-    if (USR_BUSY) return;
-    const g = id => $('#' + id).value.trim(), id = t.dataset.id, name = g('us_name'), un = toLatin(g('us_user')), pin = toLatin(g('us_pin'));
-    if (!name || !un) return toast('أكمل الاسم ومعرّف الدخول', 'err');
-    if (!/^\d{4,}$/.test(pin)) return toast('الرقم السري 4 أرقام على الأقل', 'err');
-    if (DB.users.some(u => u.id !== id && userLogins(u).includes(loginId(un)))) return toast('المعرّف مستخدم بالفعل', 'err');
-    const act = $('#us_act').checked, role = g('us_role');
-    if (id) {
-        const u = DB.users.find(x => x.id === id);
-        if (u.role === 'owner' && (role !== 'owner' || !act) && DB.users.filter(x => x.role === 'owner' && x.active).length <= 1) return toast('لازم يبقى مالك نشط واحد على الأقل', 'err');
-    }
-    USR_BUSY = true;
-    try {
-        const old = id ? DB.users.find(x => x.id === id) : null;
-        if (FBS.on && FBS.ready) {
-            const ids = [...new Set([un, old && old.phone].map(x => loginId(x || '')).filter(Boolean))];
-            try { for (const i of ids) await fbUpsertAuth(i, old && old.pin, pin); }
-            catch (e) { console.error(e); return toast('تعذر تحديث حساب الدخول: ' + (e.code || e.message), 'err'); }
-        }
-        if (old) { Object.assign(old, { name, username: un, pin, role, active: act }); if (old.id === USER.id) USER = old; }
-        else DB.users.push({ id: 'u' + uid(), name, username: un, pin, role, active: act });
-        save();
-        if (FBS.on && FBS.ready) { clearTimeout(FBS.timer); await fbPush(); }   // نضمن الحفظ قبل ما تقفلي الصفحة
-        closeTopModal(); renderSide(); renderView(); toast('تم الحفظ');
-    } finally { USR_BUSY = false; }
-};
+        let USR_BUSY = false;
+        ACT.userSave = async t => {
+            if (USR_BUSY) return;
+            const g = id => $('#' + id).value.trim(), id = t.dataset.id, name = g('us_name'), un = toLatin(g('us_user')), pin = toLatin(g('us_pin'));
+            if (!name || !un) return toast('أكمل الاسم ومعرّف الدخول', 'err');
+            if (!/^\d{4,}$/.test(pin)) return toast('الرقم السري 4 أرقام على الأقل', 'err');
+            if (DB.users.some(u => u.id !== id && userLogins(u).includes(loginId(un)))) return toast('المعرّف مستخدم بالفعل', 'err');
+            const act = $('#us_act').checked, role = g('us_role');
+            if (id) {
+                const u = DB.users.find(x => x.id === id);
+                if (u.role === 'owner' && (role !== 'owner' || !act) && DB.users.filter(x => x.role === 'owner' && x.active).length <= 1) return toast('لازم يبقى مالك نشط واحد على الأقل', 'err');
+            }
+            USR_BUSY = true;
+            try {
+                const old = id ? DB.users.find(x => x.id === id) : null;
+                if (FBS.on && FBS.ready) {
+                    const ids = [...new Set([un, old && old.phone].map(x => loginId(x || '')).filter(Boolean))];
+                    try { for (const i of ids) await fbUpsertAuth(i, old && old.pin, pin); }
+                    catch (e) { console.error(e); return toast('تعذر تحديث حساب الدخول: ' + (e.code || e.message), 'err'); }
+                }
+                if (old) { Object.assign(old, { name, username: un, pin, role, active: act }); if (old.id === USER.id) USER = old; }
+                else DB.users.push({ id: 'u' + uid(), name, username: un, pin, role, active: act });
+                save();
+                if (FBS.on && FBS.ready) { clearTimeout(FBS.timer); await fbPush(); }   // نضمن الحفظ قبل ما تقفلي الصفحة
+                closeTopModal(); renderSide(); renderView(); toast('تم الحفظ');
+            } finally { USR_BUSY = false; }
+        };
 
-// يتأكد إن لكل مستخدم نشط حساب دخول شغال (ينشئه لو ناقص)
-ACT.usersSync = async () => {
-    if (!(FBS.on && FBS.ready)) return toast('المزامنة محتاجة اتصال Firebase', 'err');
-    const ok = [], bad = [];
-    toast('جاري مزامنة حسابات الدخول…', 'warn');
-    for (const u of DB.users.filter(x => x.active)) {
-        if (!/^\d{4,}$/.test(u.pin || '')) { bad.push(u.name + ' — مفيش رقم سري محفوظ (يدخل مرة بنفسه وهيتظبط)'); continue; }
-        try { for (const i of userLogins(u)) await fbUpsertAuth(i, '', u.pin); ok.push(u.name); }
-        catch (e) { bad.push(u.name + ' — ' + (e.code || e.message)); }
-    }
-    modal('نتيجة مزامنة حسابات الدخول', `<div class="space-y-3 text-sm">
+        // يتأكد إن لكل مستخدم نشط حساب دخول شغال (ينشئه لو ناقص)
+        ACT.usersSync = async () => {
+            if (!(FBS.on && FBS.ready)) return toast('المزامنة محتاجة اتصال Firebase', 'err');
+            const ok = [], bad = [];
+            toast('جاري مزامنة حسابات الدخول…', 'warn');
+            for (const u of DB.users.filter(x => x.active)) {
+                if (!/^\d{4,}$/.test(u.pin || '')) { bad.push(u.name + ' — مفيش رقم سري محفوظ (يدخل مرة بنفسه وهيتظبط)'); continue; }
+                try { for (const i of userLogins(u)) await fbUpsertAuth(i, '', u.pin); ok.push(u.name); }
+                catch (e) { bad.push(u.name + ' — ' + (e.code || e.message)); }
+            }
+            modal('نتيجة مزامنة حسابات الدخول', `<div class="space-y-3 text-sm">
       <div class="p-3 rounded-xl bg-emerald-50 text-emerald-800">شغّال: <b>${ok.length}</b>${ok.length ? ' — ' + ok.map(esc).join('، ') : ''}</div>
       ${bad.length ? `<div class="p-3 rounded-xl bg-red-50 text-red-600 leading-7"><b>محتاج انتباه (${bad.length}):</b><br>${bad.map(esc).join('<br>')}</div>` : ''}</div>`, { size: 'sm' });
-};
+        };
 
 
-                         
+
         ACT.userDel = t => {
             const u = DB.users.find(x => x.id === t.dataset.id); if (!u) return;
             if (u.id === USER.id) return toast('مينفعش تحذف نفسك', 'err');
@@ -2321,30 +2350,30 @@ ACT.usersSync = async () => {
         ACT.lbMove = t => { const a = labelCfg().items, i = +t.dataset.i, j = i + +t.dataset.d; if (j < 0 || j >= a.length) return;[a[i], a[j]] = [a[j], a[i]]; lbRefresh(); };
         ACT.lbReset = () => { S().label = LABEL_DEF(); save(); renderView(); };
         /* ================= CUSTOMERS ================= */
-function customersList() {
-    const map = {};
-    DB.invoices.forEach(i => {
-        const c = i.customer || {}, name = (c.name || '').trim(), phone = normPhone(c.phone || '');
-        if (!name && !phone) return;
-        const key = phone || 'n:' + name.toLowerCase();
-        const x = map[key] = map[key] || { key, name: '', phone: '', invs: [], total: 0 };
-        if (name && !x.name) x.name = name;
-        if (c.phone && !x.phone) x.phone = c.phone;
-        x.invs.push(i); x.total += i.total;
-    });
-    return Object.values(map).map(x => { x.invs.sort((a, b) => invNum(b) - invNum(a)); x.last = x.invs[0].date; return x; });
-}
-function pgCustomers() {
-    return `<div class="space-y-4"><div class="card p-3 flex flex-wrap gap-2 items-center">
+        function customersList() {
+            const map = {};
+            DB.invoices.forEach(i => {
+                const c = i.customer || {}, name = (c.name || '').trim(), phone = normPhone(c.phone || '');
+                if (!name && !phone) return;
+                const key = phone || 'n:' + name.toLowerCase();
+                const x = map[key] = map[key] || { key, name: '', phone: '', invs: [], total: 0 };
+                if (name && !x.name) x.name = name;
+                if (c.phone && !x.phone) x.phone = c.phone;
+                x.invs.push(i); x.total += i.total;
+            });
+            return Object.values(map).map(x => { x.invs.sort((a, b) => invNum(b) - invNum(a)); x.last = x.invs[0].date; return x; });
+        }
+        function pgCustomers() {
+            return `<div class="space-y-4"><div class="card p-3 flex flex-wrap gap-2 items-center">
     <input class="inp flex-1 min-w-[200px]" placeholder="بحث بالاسم أو الموبايل..." value="${esc(UI.custQ)}" data-oninput="custQ">
     <button class="btn btn-soft" data-action="custCsv">⬇️ تصدير CSV</button></div>
     <div id="custList">${custListHTML()}</div></div>`;
-}
-function custListHTML() {
-    const q = toLatin(UI.custQ).trim().toLowerCase();
-    const list = customersList().filter(c => !q || c.name.toLowerCase().includes(q) || toLatin(c.phone).includes(q)).sort((a, b) => b.last.localeCompare(a.last));
-    if (!list.length) return `<div class="card">${empty('لا يوجد عملاء — بيتسجلوا تلقائي من اسم / موبايل العميل في الفاتورة')}</div>`;
-    return `<div class="card overflow-x-auto"><div class="px-4 py-2.5 text-xs text-stone-500 border-b border-sand/30">${list.length} عميل</div>
+        }
+        function custListHTML() {
+            const q = toLatin(UI.custQ).trim().toLowerCase();
+            const list = customersList().filter(c => !q || c.name.toLowerCase().includes(q) || toLatin(c.phone).includes(q)).sort((a, b) => b.last.localeCompare(a.last));
+            if (!list.length) return `<div class="card">${empty('لا يوجد عملاء — بيتسجلوا تلقائي من اسم / موبايل العميل في الفاتورة')}</div>`;
+            return `<div class="card overflow-x-auto"><div class="px-4 py-2.5 text-xs text-stone-500 border-b border-sand/30">${list.length} عميل</div>
     <table class="w-full min-w-[640px]"><thead><tr><th class="th w-12">#</th><th class="th">العميل</th><th class="th">الموبايل</th><th class="th text-center">عدد الفواتير</th><th class="th">إجمالي المشتريات</th><th class="th">آخر شراء</th></tr></thead><tbody>
     ${list.map((c, i) => `<tr class="hover:bg-sand/20 cursor-pointer" data-action="custOpen" data-k="${esc(c.key)}">
       <td class="td text-xs text-stone-400">${i + 1}</td>
@@ -2353,153 +2382,153 @@ function custListHTML() {
       <td class="td text-center"><span class="badge bg-sand/40 text-cocoa">${c.invs.length}</span></td>
       <td class="td font-extrabold text-cocoa">${money(c.total)}</td>
       <td class="td text-xs text-stone-500">${fday(ymd(c.last))}</td></tr>`).join('')}</tbody></table></div>`;
-}
+        }
 
 
-ACT.custQ = t => { UI.custQ = t.value; $('#custList').innerHTML = custListHTML(); };
-ACT.custOpen = t => {
-    const c = customersList().find(x => x.key === t.dataset.k); if (!c) return;
-    modal(esc(c.name || 'بدون اسم') + (c.phone ? ` <span class="text-sm font-normal text-stone-400" dir="ltr">${esc(c.phone)}</span>` : ''),
-        `<table class="w-full"><thead><tr><th class="th">التاريخ</th><th class="th">رقم الفاتورة</th><th class="th">سعر الفاتورة</th></tr></thead><tbody>
+        ACT.custQ = t => { UI.custQ = t.value; $('#custList').innerHTML = custListHTML(); };
+        ACT.custOpen = t => {
+            const c = customersList().find(x => x.key === t.dataset.k); if (!c) return;
+            modal(esc(c.name || 'بدون اسم') + (c.phone ? ` <span class="text-sm font-normal text-stone-400" dir="ltr">${esc(c.phone)}</span>` : ''),
+                `<table class="w-full"><thead><tr><th class="th">التاريخ</th><th class="th">رقم الفاتورة</th><th class="th">سعر الفاتورة</th></tr></thead><tbody>
         ${c.invs.map(i => `<tr class="hover:bg-sand/10"><td class="td text-xs">${fdate(i.date)}</td>
           <td class="td"><button class="font-bold text-cocoa underline" data-action="viewInv" data-id="${i.id}">${i.id}</button></td>
           <td class="td font-bold text-cocoa">${money(i.total)}</td></tr>`).join('')}</tbody></table>`,
-        { size: 'md', footer: `<div class="flex-1 text-sm text-stone-500">${c.invs.length} فاتورة • الإجمالي <b class="text-cocoa">${money(c.total)}</b></div><button class="btn btn-ghost" data-action="closeModal">إغلاق</button>` });
-};
-ACT.custCsv = () => exportCSV('tiana-customers', [
-    { h: 'الاسم', v: c => c.name }, { h: 'الموبايل', v: c => c.phone }, { h: 'عدد الفواتير', v: c => c.invs.length },
-    { h: 'إجمالي المشتريات', v: c => Math.round(c.total * 100) / 100 }, { h: 'آخر شراء', v: c => ymd(c.last) },
-    { h: 'أرقام الفواتير', v: c => c.invs.map(i => i.id).join(' | ') }], customersList());
+                { size: 'md', footer: `<div class="flex-1 text-sm text-stone-500">${c.invs.length} فاتورة • الإجمالي <b class="text-cocoa">${money(c.total)}</b></div><button class="btn btn-ghost" data-action="closeModal">إغلاق</button>` });
+        };
+        ACT.custCsv = () => exportCSV('tiana-customers', [
+            { h: 'الاسم', v: c => c.name }, { h: 'الموبايل', v: c => c.phone }, { h: 'عدد الفواتير', v: c => c.invs.length },
+            { h: 'إجمالي المشتريات', v: c => Math.round(c.total * 100) / 100 }, { h: 'آخر شراء', v: c => ymd(c.last) },
+            { h: 'أرقام الفواتير', v: c => c.invs.map(i => i.id).join(' | ') }], customersList());
 
 
-    /* ================= MERGE INVOICES ================= */
-let MG = null;
-function mgCandidates(a) {
-    const key = c => { const x = c || {}; return normPhone(x.phone || '') || (x.name || '').trim().toLowerCase(); };
-    const ka = key(a.customer);
-    return DB.invoices.filter(i => i.id !== a.id)
-        .map(i => ({ i, same: !!ka && key(i.customer) === ka }))
-        .sort((x, y) => (y.same - x.same) || (invNum(y.i) - invNum(x.i)));
-}
-function mgPickHTML(q) {
-    const a = DB.invoices.find(i => i.id === MG.a); q = toLatin(q || '').trim().toLowerCase();
-    const L = mgCandidates(a).filter(({ i }) => { const c = i.customer || {}; return !q || i.id.toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q) || toLatin(c.phone || '').includes(q); });
-    return L.slice(0, 40).map(({ i, same }) => `<button data-action="mgPick" data-id="${i.id}" class="w-full flex items-center gap-3 p-2.5 rounded-xl border-2 ${same ? 'border-cocoa bg-cocoa/5' : 'border-sand/40'} hover:bg-sand/20 text-start"><b>${i.id}</b><span class="text-xs text-stone-500 flex-1">${fdate(i.date)}${(i.customer || {}).name ? ' • ' + esc(i.customer.name) : ''}${same ? ' • <b class="text-cocoa">نفس العميل</b>' : ''}</span><b class="text-cocoa">${money(i.total)}</b></button>`).join('') || empty('لا توجد فواتير');
-}
-ACT.invMerge = t => {
-    if (!can('delete')) return toast('الدمج بيحتاج صلاحية الحذف', 'err');
-    const a = DB.invoices.find(i => i.id === t.dataset.id); if (!a) return;
-    MG = { a: a.id };
-    modal('🔗 دمج فاتورة', `<div class="text-sm mb-3">اختار الفاتورة اللي هتتدمج مع <b>${a.id}</b> (${money(a.total)}) — فواتير نفس العميل بتظهر الأول:</div>
+        /* ================= MERGE INVOICES ================= */
+        let MG = null;
+        function mgCandidates(a) {
+            const key = c => { const x = c || {}; return normPhone(x.phone || '') || (x.name || '').trim().toLowerCase(); };
+            const ka = key(a.customer);
+            return DB.invoices.filter(i => i.id !== a.id)
+                .map(i => ({ i, same: !!ka && key(i.customer) === ka }))
+                .sort((x, y) => (y.same - x.same) || (invNum(y.i) - invNum(x.i)));
+        }
+        function mgPickHTML(q) {
+            const a = DB.invoices.find(i => i.id === MG.a); q = toLatin(q || '').trim().toLowerCase();
+            const L = mgCandidates(a).filter(({ i }) => { const c = i.customer || {}; return !q || i.id.toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q) || toLatin(c.phone || '').includes(q); });
+            return L.slice(0, 40).map(({ i, same }) => `<button data-action="mgPick" data-id="${i.id}" class="w-full flex items-center gap-3 p-2.5 rounded-xl border-2 ${same ? 'border-cocoa bg-cocoa/5' : 'border-sand/40'} hover:bg-sand/20 text-start"><b>${i.id}</b><span class="text-xs text-stone-500 flex-1">${fdate(i.date)}${(i.customer || {}).name ? ' • ' + esc(i.customer.name) : ''}${same ? ' • <b class="text-cocoa">نفس العميل</b>' : ''}</span><b class="text-cocoa">${money(i.total)}</b></button>`).join('') || empty('لا توجد فواتير');
+        }
+        ACT.invMerge = t => {
+            if (!can('delete')) return toast('الدمج بيحتاج صلاحية الحذف', 'err');
+            const a = DB.invoices.find(i => i.id === t.dataset.id); if (!a) return;
+            MG = { a: a.id };
+            modal('🔗 دمج فاتورة', `<div class="text-sm mb-3">اختار الفاتورة اللي هتتدمج مع <b>${a.id}</b> (${money(a.total)}) — فواتير نفس العميل بتظهر الأول:</div>
     <input id="mgQ" class="inp mb-3" placeholder="بحث برقم الفاتورة أو العميل..." data-oninput="mgQ" autocomplete="off">
     <div id="mgList" class="space-y-1.5 max-h-[50vh] overflow-y-auto">${mgPickHTML('')}</div>`, { size: 'sm' });
-};
-ACT.mgQ = t => { $('#mgList').innerHTML = mgPickHTML(t.value); };
-ACT.mgPick = t => {
-    const ia = DB.invoices.find(i => i.id === MG.a), ib = DB.invoices.find(i => i.id === t.dataset.id); if (!ia || !ib) return;
-    MG.keep = invNum(ia) <= invNum(ib) ? ia.id : ib.id; MG.drop = MG.keep === ia.id ? ib.id : ia.id; MG.mode = 'sum';
-    closeTopModal();
-    modal('دمج فواتير', '<div id="mgBody"></div>', { size: 'md', footer: '<button id="mgGo" class="btn btn-primary" data-action="mgRun">🔗 تنفيذ</button><button class="btn btn-ghost" data-action="closeModal">إلغاء</button>' });
-    mgRender();
-};
-ACT.mgSwap = () => { [MG.keep, MG.drop] = [MG.drop, MG.keep]; mgRender(); };
-ACT.mgMode = t => { MG.mode = t.dataset.m; mgRender(); };
+        };
+        ACT.mgQ = t => { $('#mgList').innerHTML = mgPickHTML(t.value); };
+        ACT.mgPick = t => {
+            const ia = DB.invoices.find(i => i.id === MG.a), ib = DB.invoices.find(i => i.id === t.dataset.id); if (!ia || !ib) return;
+            MG.keep = invNum(ia) <= invNum(ib) ? ia.id : ib.id; MG.drop = MG.keep === ia.id ? ib.id : ia.id; MG.mode = 'sum';
+            closeTopModal();
+            modal('دمج فواتير', '<div id="mgBody"></div>', { size: 'md', footer: '<button id="mgGo" class="btn btn-primary" data-action="mgRun">🔗 تنفيذ</button><button class="btn btn-ghost" data-action="closeModal">إلغاء</button>' });
+            mgRender();
+        };
+        ACT.mgSwap = () => { [MG.keep, MG.drop] = [MG.drop, MG.keep]; mgRender(); };
+        ACT.mgMode = t => { MG.mode = t.dataset.m; mgRender(); };
 
-function mgCheck(k, d) {
-    if (k.channel !== d.channel) return 'القناة مختلفة (محل / أونلاين) — مينفعش دمج.';
-    if (k.pay.method !== d.pay.method) return 'طريقة الدفع مختلفة (' + payLabel(k.pay.method) + ' / ' + payLabel(d.pay.method) + ') — عدّلي طريقة الدفع الأول أو استخدمي وضع "الفاتورة دي تكرار".';
-    if (k.pay.method !== 'cash' && ((k.pay.bank || '') !== (d.pay.bank || '') || (k.pay.sub || '') !== (d.pay.sub || ''))) return 'الحساب البنكي أو وسيلة الدفع مختلفة بين الفاتورتين.';
-    return '';
-}
-function mgBuild(k, d) {
-    const m = JSON.parse(JSON.stringify(k)), byV = {};
-    m.items.forEach(x => { byV[x.vid] = x; });
-    d.items.forEach(x => {
-        const e = byV[x.vid];
-        if (!e) { const c = JSON.parse(JSON.stringify(x)); m.items.push(c); byV[c.vid] = c; return; }
-        const q = e.qty + x.qty, w = f => ((e[f] || 0) * e.qty + (x[f] || 0) * x.qty) / q;
-        e.price = w('price'); e.cost = w('cost'); e.netEx = w('netEx'); e.net = w('net');
-        e.lineDisc = (e.lineDisc || 0) + (x.lineDisc || 0); e.qty = q;
-    });
-    ['subtotal', 'discount', 'tax', 'total'].forEach(f => { m[f] = (k[f] || 0) + (d[f] || 0); });
-    if (k.ship || d.ship) m.ship = (k.ship || 0) + (d.ship || 0);
-    m.pay.received = (k.pay.received || 0) + (d.pay.received || 0);
-    if (d.pay.ref && d.pay.ref !== k.pay.ref) m.pay.ref = [k.pay.ref, d.pay.ref].filter(Boolean).join(' + ');
-    const c = m.customer || (m.customer = { name: '', phone: '' }), dc = d.customer || {};
-    if (!c.name && dc.name) c.name = dc.name; if (!c.phone && dc.phone) c.phone = dc.phone;
-    m.memo = [k.memo, d.memo].filter(Boolean).join(' | ');
-    if (!m.note && d.note) m.note = d.note;
-    return m;
-}
-function mgRender() {
-    const k = DB.invoices.find(i => i.id === MG.keep), d = DB.invoices.find(i => i.id === MG.drop), b = $('#mgBody');
-    if (!b || !k || !d) return;
-    const sum = MG.mode === 'sum', err = sum ? mgCheck(k, d) : '';
-    const card = (i, lbl, cls) => `<div class="flex-1 min-w-0 p-3 rounded-xl border-2 ${cls}"><div class="text-[11px] text-stone-500">${lbl}</div><div class="font-extrabold">${i.id}</div><div class="text-[11px] text-stone-500">${fdate(i.date)}</div><div class="text-xs truncate">${esc((i.customer || {}).name || '—')}</div><div class="font-bold text-cocoa mt-1">${money(i.total)}</div></div>`;
-    const opt = (m, title, desc) => `<label class="flex items-start gap-2 p-3 rounded-xl border-2 cursor-pointer ${MG.mode === m ? 'border-cocoa bg-cocoa/5' : 'border-sand/60'}"><input type="radio" name="mgMode" class="mt-1 accent-[#87624C]" ${MG.mode === m ? 'checked' : ''} data-onchange="mgMode" data-m="${m}"><span class="text-sm"><b>${title}</b><br><span class="text-xs text-stone-500">${desc}</span></span></label>`;
-    let prev;
-    if (sum) {
-        const m = mgBuild(k, d);
-        prev = `<div class="rounded-xl border border-sand/40 overflow-hidden"><div class="px-3 py-2 text-xs font-bold bg-sand/20">شكل الفاتورة بعد الدمج (${k.id})</div><table class="w-full text-xs"><tbody>${m.items.map(x => `<tr class="border-t border-sand/30"><td class="px-3 py-1.5">${esc(x.name)}<div class="text-[10px] text-stone-400">${esc(x.label)}</div></td><td class="text-center">×${x.qty}</td><td class="px-3 text-end font-semibold">${money(x.price * x.qty)}</td></tr>`).join('')}</tbody></table><div class="px-3 py-2 border-t border-sand/40 flex justify-between font-extrabold"><span>الإجمالي</span><span class="text-cocoa">${money(m.total)}</span></div></div>`;
-    } else {
-        prev = `<div class="rounded-xl bg-amber-50 text-amber-800 text-xs p-3 leading-6">هتتحذف <b>${d.id}</b> نهائياً وكمياتها هترجع للمخزون${DB.returns.some(r => r.invId === d.id) ? '، وهتتحذف المرتجعات المرتبطة بيها' : ''}. الفاتورة <b>${k.id}</b> هتفضل زي ما هي.</div>`;
-    }
-    b.innerHTML = `<div class="space-y-3">
+        function mgCheck(k, d) {
+            if (k.channel !== d.channel) return 'القناة مختلفة (محل / أونلاين) — مينفعش دمج.';
+            if (k.pay.method !== d.pay.method) return 'طريقة الدفع مختلفة (' + payLabel(k.pay.method) + ' / ' + payLabel(d.pay.method) + ') — عدّلي طريقة الدفع الأول أو استخدمي وضع "الفاتورة دي تكرار".';
+            if (k.pay.method !== 'cash' && ((k.pay.bank || '') !== (d.pay.bank || '') || (k.pay.sub || '') !== (d.pay.sub || ''))) return 'الحساب البنكي أو وسيلة الدفع مختلفة بين الفاتورتين.';
+            return '';
+        }
+        function mgBuild(k, d) {
+            const m = JSON.parse(JSON.stringify(k)), byV = {};
+            m.items.forEach(x => { byV[x.vid] = x; });
+            d.items.forEach(x => {
+                const e = byV[x.vid];
+                if (!e) { const c = JSON.parse(JSON.stringify(x)); m.items.push(c); byV[c.vid] = c; return; }
+                const q = e.qty + x.qty, w = f => ((e[f] || 0) * e.qty + (x[f] || 0) * x.qty) / q;
+                e.price = w('price'); e.cost = w('cost'); e.netEx = w('netEx'); e.net = w('net');
+                e.lineDisc = (e.lineDisc || 0) + (x.lineDisc || 0); e.qty = q;
+            });
+            ['subtotal', 'discount', 'tax', 'total'].forEach(f => { m[f] = (k[f] || 0) + (d[f] || 0); });
+            if (k.ship || d.ship) m.ship = (k.ship || 0) + (d.ship || 0);
+            m.pay.received = (k.pay.received || 0) + (d.pay.received || 0);
+            if (d.pay.ref && d.pay.ref !== k.pay.ref) m.pay.ref = [k.pay.ref, d.pay.ref].filter(Boolean).join(' + ');
+            const c = m.customer || (m.customer = { name: '', phone: '' }), dc = d.customer || {};
+            if (!c.name && dc.name) c.name = dc.name; if (!c.phone && dc.phone) c.phone = dc.phone;
+            m.memo = [k.memo, d.memo].filter(Boolean).join(' | ');
+            if (!m.note && d.note) m.note = d.note;
+            return m;
+        }
+        function mgRender() {
+            const k = DB.invoices.find(i => i.id === MG.keep), d = DB.invoices.find(i => i.id === MG.drop), b = $('#mgBody');
+            if (!b || !k || !d) return;
+            const sum = MG.mode === 'sum', err = sum ? mgCheck(k, d) : '';
+            const card = (i, lbl, cls) => `<div class="flex-1 min-w-0 p-3 rounded-xl border-2 ${cls}"><div class="text-[11px] text-stone-500">${lbl}</div><div class="font-extrabold">${i.id}</div><div class="text-[11px] text-stone-500">${fdate(i.date)}</div><div class="text-xs truncate">${esc((i.customer || {}).name || '—')}</div><div class="font-bold text-cocoa mt-1">${money(i.total)}</div></div>`;
+            const opt = (m, title, desc) => `<label class="flex items-start gap-2 p-3 rounded-xl border-2 cursor-pointer ${MG.mode === m ? 'border-cocoa bg-cocoa/5' : 'border-sand/60'}"><input type="radio" name="mgMode" class="mt-1 accent-[#87624C]" ${MG.mode === m ? 'checked' : ''} data-onchange="mgMode" data-m="${m}"><span class="text-sm"><b>${title}</b><br><span class="text-xs text-stone-500">${desc}</span></span></label>`;
+            let prev;
+            if (sum) {
+                const m = mgBuild(k, d);
+                prev = `<div class="rounded-xl border border-sand/40 overflow-hidden"><div class="px-3 py-2 text-xs font-bold bg-sand/20">شكل الفاتورة بعد الدمج (${k.id})</div><table class="w-full text-xs"><tbody>${m.items.map(x => `<tr class="border-t border-sand/30"><td class="px-3 py-1.5">${esc(x.name)}<div class="text-[10px] text-stone-400">${esc(x.label)}</div></td><td class="text-center">×${x.qty}</td><td class="px-3 text-end font-semibold">${money(x.price * x.qty)}</td></tr>`).join('')}</tbody></table><div class="px-3 py-2 border-t border-sand/40 flex justify-between font-extrabold"><span>الإجمالي</span><span class="text-cocoa">${money(m.total)}</span></div></div>`;
+            } else {
+                prev = `<div class="rounded-xl bg-amber-50 text-amber-800 text-xs p-3 leading-6">هتتحذف <b>${d.id}</b> نهائياً وكمياتها هترجع للمخزون${DB.returns.some(r => r.invId === d.id) ? '، وهتتحذف المرتجعات المرتبطة بيها' : ''}. الفاتورة <b>${k.id}</b> هتفضل زي ما هي.</div>`;
+            }
+            b.innerHTML = `<div class="space-y-3">
       <div class="flex items-stretch gap-2">${card(k, sum ? 'الأساسية (هتفضل)' : 'هتفضل', 'border-emerald-300 bg-emerald-50/50')}<button class="btn btn-soft btn-sm self-center" data-action="mgSwap" title="بدّل">⇄</button>${card(d, sum ? 'هتتدمج وتتحذف' : 'التكرار (هيتحذف)', 'border-red-200 bg-red-50/50')}</div>
       <div class="space-y-2">${opt('sum', 'دمج الأصناف', 'الفاتورتين بيع حقيقي واحد — الأصناف والإجمالي بيتجمعوا والمخزون يفضل زي ما هو')}${opt('dup', 'الفاتورة دي تكرار', 'نفس البيعة اتسجلت مرتين — احذف المكررة وارجّع كمياتها للمخزون')}</div>
       ${err ? `<div class="rounded-xl bg-red-50 text-red-600 text-xs p-3">${esc(err)}</div>` : ''}${prev}</div>`;
-    const go = $('#mgGo'); if (go) go.disabled = !!err;
-}
-function mgReverseStock(inv, tag) {
-    const rets = DB.returns.filter(r => r.invId === inv.id), net = {};
-    const add = (vid, q) => { net[vid] = (net[vid] || 0) + q; };
-    inv.items.forEach(i => add(i.vid, i.qty));
-    rets.forEach(r => { r.items.forEach(i => add(i.vid, -i.qty)); (r.newItems || []).forEach(n => add(n.vid, n.qty)); });
-    Object.entries(net).forEach(([vid, q]) => { const f = findVariant(vid); if (f && q) moveStock(f.p, f.v, q, 'adjust', tag); });
-    DB.returns = DB.returns.filter(r => r.invId !== inv.id);
-}
-ACT.mgRun = () => {
-    if (!can('delete')) return toast('الدمج بيحتاج صلاحية الحذف', 'err');
-    const k = DB.invoices.find(i => i.id === MG.keep), d = DB.invoices.find(i => i.id === MG.drop); if (!k || !d) return;
-    if (MG.mode === 'sum') {
-        const err = mgCheck(k, d); if (err) return toast(err, 'err');
-        if (!confirm('دمج ' + d.id + ' داخل ' + k.id + ' وحذف ' + d.id + '؟')) return;
-        DB.invoices[DB.invoices.indexOf(k)] = mgBuild(k, d);
-        DB.returns.forEach(r => { if (r.invId === d.id) r.invId = k.id; });
-        DB.orders.forEach(o => { if (o.invId === d.id) o.invId = k.id; });
-        DB.movements.forEach(x => { if (x.ref === d.id) x.ref = k.id; });
-    } else {
-        if (!confirm('حذف الفاتورة المكررة ' + d.id + ' نهائياً وإرجاع كمياتها للمخزون؟')) return;
-        mgReverseStock(d, 'حذف مكرر ' + d.id);
-        DB.orders.forEach(o => { if (o.invId === d.id) { if (k.channel === 'online' && k.note === o.id) o.invId = k.id; else { o.invId = ''; o.status = 'new'; } } });
-    }
-    DB.invoices = DB.invoices.filter(i => i.id !== d.id);
-    S().counters.inv = DB.invoices.reduce((mx, i) => Math.max(mx, invNum(i)), 0);
-    save(); $('#modalRoot').innerHTML = ''; renderSide(); renderView();
-    toast(MG.mode === 'sum' ? 'تم دمج الفاتورتين في ' + k.id : 'تم حذف المكرر ' + d.id);
-    MG = null;
-};
+            const go = $('#mgGo'); if (go) go.disabled = !!err;
+        }
+        function mgReverseStock(inv, tag) {
+            const rets = DB.returns.filter(r => r.invId === inv.id), net = {};
+            const add = (vid, q) => { net[vid] = (net[vid] || 0) + q; };
+            inv.items.forEach(i => add(i.vid, i.qty));
+            rets.forEach(r => { r.items.forEach(i => add(i.vid, -i.qty)); (r.newItems || []).forEach(n => add(n.vid, n.qty)); });
+            Object.entries(net).forEach(([vid, q]) => { const f = findVariant(vid); if (f && q) moveStock(f.p, f.v, q, 'adjust', tag); });
+            DB.returns = DB.returns.filter(r => r.invId !== inv.id);
+        }
+        ACT.mgRun = () => {
+            if (!can('delete')) return toast('الدمج بيحتاج صلاحية الحذف', 'err');
+            const k = DB.invoices.find(i => i.id === MG.keep), d = DB.invoices.find(i => i.id === MG.drop); if (!k || !d) return;
+            if (MG.mode === 'sum') {
+                const err = mgCheck(k, d); if (err) return toast(err, 'err');
+                if (!confirm('دمج ' + d.id + ' داخل ' + k.id + ' وحذف ' + d.id + '؟')) return;
+                DB.invoices[DB.invoices.indexOf(k)] = mgBuild(k, d);
+                DB.returns.forEach(r => { if (r.invId === d.id) r.invId = k.id; });
+                DB.orders.forEach(o => { if (o.invId === d.id) o.invId = k.id; });
+                DB.movements.forEach(x => { if (x.ref === d.id) x.ref = k.id; });
+            } else {
+                if (!confirm('حذف الفاتورة المكررة ' + d.id + ' نهائياً وإرجاع كمياتها للمخزون؟')) return;
+                mgReverseStock(d, 'حذف مكرر ' + d.id);
+                DB.orders.forEach(o => { if (o.invId === d.id) { if (k.channel === 'online' && k.note === o.id) o.invId = k.id; else { o.invId = ''; o.status = 'new'; } } });
+            }
+            DB.invoices = DB.invoices.filter(i => i.id !== d.id);
+            S().counters.inv = DB.invoices.reduce((mx, i) => Math.max(mx, invNum(i)), 0);
+            save(); $('#modalRoot').innerHTML = ''; renderSide(); renderView();
+            toast(MG.mode === 'sum' ? 'تم دمج الفاتورتين في ' + k.id : 'تم حذف المكرر ' + d.id);
+            MG = null;
+        };
 
 
-/* ================= RENUMBER INVOICES ================= */
-ACT.invRenum = () => {
-    if (!USER || USER.role !== 'owner') return toast('إعادة الترقيم للمالك فقط', 'err');
-    if (!DB.invoices.length) return toast('مفيش فواتير', 'warn');
-    const sorted = [...DB.invoices].sort((a, b) => a.date.localeCompare(b.date) || invNum(a) - invNum(b));
-    const map = {}; sorted.forEach((inv, i) => { map[inv.id] = invNo(i + 1); });
-    const changed = sorted.filter(i => map[i.id] !== i.id).length;
-    if (!changed) return toast('الترقيم سليم بالفعل ✅');
-    if (!confirm('هيتم إعادة ترقيم ' + changed + ' فاتورة من 1 لحد ' + sorted.length + ' حسب التاريخ.\n\nالفواتير المطبوعة قبل كده هيبقى رقمها مختلف عن النظام.\nهيتنزل نسخة احتياطية الأول. متابعة؟')) return;
-    ACT.backup();
-    DB.invoices.forEach(inv => { inv.id = map[inv.id]; });
-    DB.returns.forEach(r => { if (map[r.invId]) r.invId = map[r.invId]; });
-    DB.orders.forEach(o => { if (o.invId && map[o.invId]) o.invId = map[o.invId]; });
-    DB.movements.forEach(m => { if (m.ref) m.ref = m.ref.replace(/INV-\d+/g, x => map[x] || x); });
-    DB.invoices.sort((a, b) => invNum(b) - invNum(a));
-    S().counters.inv = sorted.length;
-    save(); renderSide(); renderView();
-    toast('تم إعادة ترقيم ' + changed + ' فاتورة ✅');
-};
+        /* ================= RENUMBER INVOICES ================= */
+        ACT.invRenum = () => {
+            if (!USER || USER.role !== 'owner') return toast('إعادة الترقيم للمالك فقط', 'err');
+            if (!DB.invoices.length) return toast('مفيش فواتير', 'warn');
+            const sorted = [...DB.invoices].sort((a, b) => a.date.localeCompare(b.date) || invNum(a) - invNum(b));
+            const map = {}; sorted.forEach((inv, i) => { map[inv.id] = invNo(i + 1); });
+            const changed = sorted.filter(i => map[i.id] !== i.id).length;
+            if (!changed) return toast('الترقيم سليم بالفعل ✅');
+            if (!confirm('هيتم إعادة ترقيم ' + changed + ' فاتورة من 1 لحد ' + sorted.length + ' حسب التاريخ.\n\nالفواتير المطبوعة قبل كده هيبقى رقمها مختلف عن النظام.\nهيتنزل نسخة احتياطية الأول. متابعة؟')) return;
+            ACT.backup();
+            DB.invoices.forEach(inv => { inv.id = map[inv.id]; });
+            DB.returns.forEach(r => { if (map[r.invId]) r.invId = map[r.invId]; });
+            DB.orders.forEach(o => { if (o.invId && map[o.invId]) o.invId = map[o.invId]; });
+            DB.movements.forEach(m => { if (m.ref) m.ref = m.ref.replace(/INV-\d+/g, x => map[x] || x); });
+            DB.invoices.sort((a, b) => invNum(b) - invNum(a));
+            S().counters.inv = sorted.length;
+            save(); renderSide(); renderView();
+            toast('تم إعادة ترقيم ' + changed + ' فاتورة ✅');
+        };
 
 
 
@@ -2780,67 +2809,67 @@ ACT.invRenum = () => {
         }
         const withTimeout = (p, ms = 30000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('Firebase timeout')), ms))]);
         let PENDING = null;
-const hash53 = s => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16); };
-// المعرّف الموحّد: لو أرقام بس يتحوّل لصيغة الموبايل (01xxxxxxxxx)
-const loginId = u => {
-    let id = toLatin(u).trim().toLowerCase().replace(/\s+/g, '');
-    if (/^\d+$/.test(id.replace(/[+\-()]/g, ''))) id = normPhone(id.replace(/[+\-()]/g, ''));
-    return id;
-};
-const fbCred = (u, p) => {
-    const id = loginId(u);
-    let safe = (/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(id) && !/[._-]{2}/.test(id) && id.length <= 60) ? id : null;
-    if (!safe) {
-        const hex = [...new TextEncoder().encode(id)].map(b => b.toString(16).padStart(2, '0')).join('');
-        safe = hex.length <= 62 ? 'u' + hex : 'h' + hash53(id);
-    }
-    return { email: safe + '@tiana.app', pass: toLatin(p).trim() + 'tiana' };
-};
-const userLogins = u => [...new Set([u.username, u.phone].map(x => loginId(x || '')).filter(Boolean))];
+        const hash53 = s => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16); };
+        // المعرّف الموحّد: لو أرقام بس يتحوّل لصيغة الموبايل (01xxxxxxxxx)
+        const loginId = u => {
+            let id = toLatin(u).trim().toLowerCase().replace(/\s+/g, '');
+            if (/^\d+$/.test(id.replace(/[+\-()]/g, ''))) id = normPhone(id.replace(/[+\-()]/g, ''));
+            return id;
+        };
+        const fbCred = (u, p) => {
+            const id = loginId(u);
+            let safe = (/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(id) && !/[._-]{2}/.test(id) && id.length <= 60) ? id : null;
+            if (!safe) {
+                const hex = [...new TextEncoder().encode(id)].map(b => b.toString(16).padStart(2, '0')).join('');
+                safe = hex.length <= 62 ? 'u' + hex : 'h' + hash53(id);
+            }
+            return { email: safe + '@tiana.app', pass: toLatin(p).trim() + 'tiana' };
+        };
+        const userLogins = u => [...new Set([u.username, u.phone].map(x => loginId(x || '')).filter(Boolean))];
 
         const LOADING_HTML = '<div class="min-h-full flex items-center justify-center text-stone-500 font-bold p-10">جاري تحميل البيانات…</div>';
-function fbLoginForm() {
-    $('#loginView').classList.remove('hidden');
-    $('#loginView').innerHTML = `<div class="min-h-full flex items-center justify-center p-4"><div class="card w-full max-w-md p-7">
+        function fbLoginForm() {
+            $('#loginView').classList.remove('hidden');
+            $('#loginView').innerHTML = `<div class="min-h-full flex items-center justify-center p-4"><div class="card w-full max-w-md p-7">
     <div class="flex justify-center mb-2">${logoHTML('h-24')}</div>
     <label class="lbl">اسم المستخدم أو رقم الموبايل</label>
     <input id="lgPhone" class="inp mb-3" dir="ltr" autocomplete="username" placeholder="Username / 01xxxxxxxxx" data-enter="fbSignIn">
     <label class="lbl">الرقم السري</label>
     <input id="lgPin" type="password" inputmode="numeric" autocomplete="current-password" class="inp mb-4" placeholder="••••" data-enter="fbSignIn">
     <button data-action="fbSignIn" class="btn btn-primary w-full !py-3">دخول</button></div></div>`;
-    setTimeout(() => { const i = $('#lgPhone'); if (i) i.focus(); }, 50);
-}
-function fbAuthGate() {
-    return new Promise(resolve => {
-        const stop = firebase.auth().onAuthStateChanged(u => {
-            if (u) { stop(); $('#loginView').classList.remove('hidden'); $('#loginView').innerHTML = LOADING_HTML; resolve(u); return; }
-            fbLoginForm();
-        });
-    });
-}
-ACT.fbSignIn = async () => {
-    const un = $('#lgPhone').value, pin = $('#lgPin').value, btn = $('#loginView [data-action="fbSignIn"]');
-    if (!un.trim() || !pin.trim()) return toast('اكتب اسم المستخدم والرقم السري', 'err');
-    const c = fbCred(un, pin);
-    PENDING = { id: loginId(un), pin: toLatin(pin).trim() };
-    if (btn) { btn.disabled = true; btn.textContent = 'جاري الدخول…'; }
-    try {
-        await firebase.auth().signInWithEmailAndPassword(c.email, c.pass);
-    } catch (e) {
-        PENDING = null; console.error(e);
-        if (btn) { btn.disabled = false; btn.textContent = 'دخول'; }
-        toast({
-            'auth/invalid-credential': 'المعرّف أو الرقم السري غلط (أو الحساب لسه متزامنش — المالك يدوس "مزامنة حسابات الدخول")',
-            'auth/user-not-found': 'الحساب مش موجود — المالك يدوس "مزامنة حسابات الدخول"',
-            'auth/wrong-password': 'الرقم السري غلط',
-            'auth/invalid-email': 'المعرّف غير صالح',
-            'auth/user-disabled': 'الحساب موقوف',
-            'auth/too-many-requests': 'محاولات كتير — استنى شوية وجرّب تاني',
-            'auth/operation-not-allowed': 'Email/Password مش مفعّل في Firebase',
-            'auth/network-request-failed': 'مشكلة في الاتصال بالإنترنت'
-        }[e.code] || ('خطأ: ' + (e.code || e.message)), 'err');
-    }
-};
+            setTimeout(() => { const i = $('#lgPhone'); if (i) i.focus(); }, 50);
+        }
+        function fbAuthGate() {
+            return new Promise(resolve => {
+                const stop = firebase.auth().onAuthStateChanged(u => {
+                    if (u) { stop(); $('#loginView').classList.remove('hidden'); $('#loginView').innerHTML = LOADING_HTML; resolve(u); return; }
+                    fbLoginForm();
+                });
+            });
+        }
+        ACT.fbSignIn = async () => {
+            const un = $('#lgPhone').value, pin = $('#lgPin').value, btn = $('#loginView [data-action="fbSignIn"]');
+            if (!un.trim() || !pin.trim()) return toast('اكتب اسم المستخدم والرقم السري', 'err');
+            const c = fbCred(un, pin);
+            PENDING = { id: loginId(un), pin: toLatin(pin).trim() };
+            if (btn) { btn.disabled = true; btn.textContent = 'جاري الدخول…'; }
+            try {
+                await firebase.auth().signInWithEmailAndPassword(c.email, c.pass);
+            } catch (e) {
+                PENDING = null; console.error(e);
+                if (btn) { btn.disabled = false; btn.textContent = 'دخول'; }
+                toast({
+                    'auth/invalid-credential': 'المعرّف أو الرقم السري غلط (أو الحساب لسه متزامنش — المالك يدوس "مزامنة حسابات الدخول")',
+                    'auth/user-not-found': 'الحساب مش موجود — المالك يدوس "مزامنة حسابات الدخول"',
+                    'auth/wrong-password': 'الرقم السري غلط',
+                    'auth/invalid-email': 'المعرّف غير صالح',
+                    'auth/user-disabled': 'الحساب موقوف',
+                    'auth/too-many-requests': 'محاولات كتير — استنى شوية وجرّب تاني',
+                    'auth/operation-not-allowed': 'Email/Password مش مفعّل في Firebase',
+                    'auth/network-request-failed': 'مشكلة في الاتصال بالإنترنت'
+                }[e.code] || ('خطأ: ' + (e.code || e.message)), 'err');
+            }
+        };
         const profileFor = au => au && DB.users.find(x => x.active &&
             [x.username, x.phone].some(v => v && fbCred(v, '').email === au.email));
 
@@ -2883,21 +2912,21 @@ ACT.fbSignIn = async () => {
                     else {                                   // أول تشغيل: Firestore فاضي
                         DB = local; if (!DB) seed(); migrate();
                         if (!profileFor(au)) {
-    const id = PENDING ? PENDING.id : au.email.replace('@tiana.app', '');
-    DB.users = [{ id: 'u1', name: id, username: id, pin: PENDING ? PENDING.pin : '', role: 'owner', active: true }];
-}
+                            const id = PENDING ? PENDING.id : au.email.replace('@tiana.app', '');
+                            DB.users = [{ id: 'u1', name: id, username: id, pin: PENDING ? PENDING.pin : '', role: 'owner', active: true }];
+                        }
                     }
                     FBS.ready = true;
                     if (!D) fbPush();
                     fbListen(); fbSchedule();
                     u = profileFor(au);
-if (u && PENDING && PENDING.pin && u.pin !== PENDING.pin) { u.pin = PENDING.pin; save(); }
-PENDING = null;
-if (!u) {
-    toast('الحساب ده مش مسجّل كمستخدم نشط في النظام — تواصل مع المالك', 'err');
-    await firebase.auth().signOut(); setTimeout(() => location.reload(), 2500); return;
-}
-} catch (e) {
+                    if (u && PENDING && PENDING.pin && u.pin !== PENDING.pin) { u.pin = PENDING.pin; save(); }
+                    PENDING = null;
+                    if (!u) {
+                        toast('الحساب ده مش مسجّل كمستخدم نشط في النظام — تواصل مع المالك', 'err');
+                        await firebase.auth().signOut(); setTimeout(() => location.reload(), 2500); return;
+                    }
+                } catch (e) {
                     console.error(e); DB = local; if (!DB) seed(); migrate(); FBS.ready = false;
                     toast('تعذر الاتصال بـ Firebase: ' + (e.code || e.message), 'err');
                 }
