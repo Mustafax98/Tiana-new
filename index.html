@@ -89,13 +89,16 @@
             display: none
         }
 
-        @media print {
+                @media print {
             body>*:not(#printArea) {
                 display: none !important
             }
 
             #printArea {
-                display: block !important
+                display: block !important;
+                width: 76mm;
+                margin: 0 auto;
+                direction: rtl
             }
 
             body {
@@ -103,11 +106,54 @@
             }
 
             @page {
-                margin: 8mm
+                size: 80mm auto;
+                margin: 2mm
             }
 
             .no-print {
                 display: none !important
+            }
+
+            #printArea .invoice {
+                max-width: 100% !important;
+                width: 100% !important;
+                font-size: 11px
+            }
+
+            #printArea .invoice table {
+                width: 100%;
+                table-layout: fixed
+            }
+
+            #printArea .invoice th,
+            #printArea .invoice td {
+                padding: 2px 1px;
+                word-break: break-word;
+                font-size: 10px
+            }
+
+            #printArea .invoice th:nth-child(1),
+            #printArea .invoice td:nth-child(1) {
+                width: 44%
+            }
+
+            #printArea .invoice th:nth-child(2),
+            #printArea .invoice td:nth-child(2) {
+                width: 12%
+            }
+
+            #printArea .invoice th:nth-child(3),
+            #printArea .invoice td:nth-child(3) {
+                width: 21%
+            }
+
+            #printArea .invoice th:nth-child(4),
+            #printArea .invoice td:nth-child(4) {
+                width: 23%
+            }
+
+            #printArea img {
+                max-height: 18mm
             }
         }
 
